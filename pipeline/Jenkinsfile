@@ -9,18 +9,8 @@ pipeline {
     }
 
     stages {
-        stage('Clone repository') {
-            steps {
-                checkout([$class: 'GitSCM',
-                    branches: [[name: '*/master']],
-                    userRemoteConfigs: [[
-                        url: "${env.GIT_REPO_URL}",
-                        credentialsId: 'git'
-                    ]]
-                ])
-            }
-        }
-
+        // Removing the redundant Clone repository stage since Jenkins is already checking out the code
+        
         stage('Create ECR repository') {
             steps {
                 withAWS(region: "${AWS_REGION}", credentials: 'aws') {
