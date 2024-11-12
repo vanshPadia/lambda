@@ -8,13 +8,17 @@ pipeline {
         LAMBDA_FUNCTION_NAME = "${env.LAMBDA_FUNCTION_NAME}"
     }
 
-    stages {
-        stage('Clone repository') {
-            steps {
-                checkout([$class: 'GitSCM', branches: [[name: '*/master']],
-                          userRemoteConfigs: [[url: "${env.GIT_REPO_URL}"]]])
-            }
-        }
+    stage('Clone repository') {
+    steps {
+        checkout([$class: 'GitSCM',
+            branches: [[name: '*/master']],
+            userRemoteConfigs: [[
+                url: "${env.GIT_REPO_URL}",
+                credentialsId: 'your-git-credentials-id'
+            ]]
+        ])
+    }
+}
 
         stage('Create ECR repository') {
             steps {
