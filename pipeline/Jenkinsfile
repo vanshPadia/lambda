@@ -9,19 +9,37 @@ pipeline {
     }
 
     stages {
-        // Removing the redundant Clone repository stage since Jenkins is already checking out the code
+        stage('Debug Info') {
+            steps {
+                sh 'aws --version'
+                sh 'docker --version'
+                echo "AWS Region: ${AWS_REGION}"
+                echo "ECR Repo: ${ECR_REPO_NAME}"
+                echo "Lambda Function: ${LAMBDA_FUNCTION_NAME}"
+            }
+        }
         
-        stage('Create ECR repository') {
+        stage('Manage ECR Repository') {
             steps {
                 withAWS(region: "${AWS_REGION}", credentials: 'aws') {
                     script {
-                        def ecrDescribe = sh(
-                            script: "aws ecr describe-repositories --repository-names ${ECR_REPO_NAME} --region ${AWS_REGION}",
+                        // Try to delete existing repository
+                        sh(
+                            script: "aws ecr delete-repository --repository-name ${ECR_REPO_NAME} --region ${AWS_REGION} --force || true",
                             returnStatus: true
                         )
-                        if (ecrDescribe != 0) {
-                            sh "aws ecr create-repository --repository-name ${ECR_REPO_NAME} --region ${AWS_REGION}"
-                        }
+                        
+                        // Wait a few seconds to ensure deletion is complete
+                        sleep 10
+                        
+                        // Create new repository
+                        sh """
+                            aws ecr create-repository \
+                            --repository-name ${ECR_REPO_NAME} \
+                            --region ${AWS_REGION} \
+                            --image-scanning-configuration scanOnPush=true \
+                            --image-tag-mutability MUTABLE
+                        """
                     }
                 }
             }
@@ -46,6 +64,9 @@ pipeline {
                         
                         // Push Docker image to ECR
                         sh "docker push ${ecrUri}"
+                        
+                        // Clean up local images
+                        sh "docker rmi ${ECR_REPO_NAME}:${IMAGE_TAG} ${ecrUri} || true"
                     }
                 }
             }
@@ -100,6 +121,10 @@ pipeline {
         }
         failure {
             echo 'Pipeline failed.'
+        }
+        always {
+            // Clean up Docker images
+            sh 'docker system prune -f || true'
         }
     }
 }
