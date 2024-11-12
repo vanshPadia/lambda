@@ -1,0 +1,90 @@
+pipeline {
+    agent any
+
+    environment {
+        AWS_REGION = "${env.AWS_REGION}"
+        ECR_REPO_NAME = "${env.ECR_REPO_NAME}"
+        IMAGE_TAG = 'latest'
+        LAMBDA_FUNCTION_NAME = "${env.LAMBDA_FUNCTION_NAME}"
+    }
+
+    stages {
+        stage('Clone repository') {
+            steps {
+                checkout([$class: 'GitSCM', branches: [[name: '*/main']],
+                          userRemoteConfigs: [[url: "${env.GIT_REPO_URL}"]]])
+            }
+        }
+
+        stage('Create ECR repository') {
+            steps {
+                withAWS(region: "${AWS_REGION}", credentials: 'aws') {
+                    script {
+                        def ecrDescribe = sh(script: "aws ecr describe-repositories --repository-names ${ECR_REPO_NAME} --region ${AWS_REGION}", returnStatus: true)
+                        if (ecrDescribe != 0) {
+                            sh "aws ecr create-repository --repository-name ${ECR_REPO_NAME} --region ${AWS_REGION}"
+                        }
+                    }
+                }
+            }
+        }
+
+        stage('Build Docker image and Push to ECR') {
+            steps {
+                withAWS(region: "${AWS_REGION}", credentials: 'aws') {
+                    script {
+                        def accountId = sh(script: "aws sts get-caller-identity --query Account --output text", returnStdout: true).trim()
+                        def ecrUri = "${accountId}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPO_NAME}:${IMAGE_TAG}"
+
+                        // Authenticate Docker to ECR
+                        sh "aws ecr get-login-password --region ${AWS_REGION} | docker login --username AWS --password-stdin ${accountId}.dkr.ecr.${AWS_REGION}.amazonaws.com"
+
+                        // Build and tag Docker image
+                        sh "docker build -t ${ECR_REPO_NAME}:${IMAGE_TAG} ."
+                        sh "docker tag ${ECR_REPO_NAME}:${IMAGE_TAG} ${ecrUri}"
+
+                        // Push Docker image to ECR
+                        sh "docker push ${ecrUri}"
+                    }
+                }
+            }
+        }
+
+        stage('Update Lambda function with Environment Variables') {
+            steps {
+                withAWS(region: "${AWS_REGION}", credentials: 'aws') {
+                    script {
+                        def accountId = sh(script: "aws sts get-caller-identity --query Account --output text", returnStdout: true).trim()
+                        def ecrUri = "${accountId}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPO_NAME}:${IMAGE_TAG}"
+
+                        // Update Lambda function with the new ECR image and set environment variables
+                        sh """
+                            aws lambda update-function-configuration \
+                            --function-name ${LAMBDA_FUNCTION_NAME} \
+                            --memory-size 10240 \
+                            --timeout 300 \
+                            --region ${AWS_REGION} \
+                            --environment "Variables={DB_HOST=${env.DB_HOST},DB_NAME=${env.DB_NAME},DB_PASSWORD=${env.DB_PASSWORD},DB_USER=${env.DB_USER},RECIPIENT_EMAILS=${env.RECIPIENT_EMAILS},SENDER_EMAIL=${env.SENDER_EMAIL},SENDER_PASSWORD=${env.SENDER_PASSWORD},SMTP_PORT=${env.SMTP_PORT},SMTP_SERVER=${env.SMTP_SERVER}}"
+                        """
+
+                        sh """
+                            aws lambda update-function-code \
+                            --function-name ${LAMBDA_FUNCTION_NAME} \
+                            --image-uri ${ecrUri} \
+                            --region ${AWS_REGION}
+                        """
+                    }
+                }
+            }
+        }
+    }
+
+    post {
+        success {
+            echo 'Pipeline completed successfully!'
+        }
+        failure {
+            echo 'Pipeline failed.'
+        }
+    }
+}
