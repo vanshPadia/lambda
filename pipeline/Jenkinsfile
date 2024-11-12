@@ -14,7 +14,7 @@ pipeline {
             branches: [[name: '*/master']],
             userRemoteConfigs: [[
                 url: "${env.GIT_REPO_URL}",
-                credentialsId: 'your-git-credentials-id'
+                credentialsId: 'git'
             ]]
         ])
     }
